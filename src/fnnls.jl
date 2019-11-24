@@ -101,6 +101,24 @@ function fnnls!(
         return j1, j2
     end
 
+    function copytostart!(dst, src, P)
+        j1, j2, idx = 0, 0, 0
+        @inbounds for i2 in 1:size(src, 2)
+            if P[i2]
+                j2 += 1
+                j1  = 0
+                for i1 in 1:size(src, 1)
+                    if P[i1]
+                        j1  += 1
+                        idx += 1
+                        dst[idx] = src[i1,i2]
+                    end
+                end
+            end
+        end
+        return j1, j2
+    end
+
     function copytotop!(dst, src, P)
         j1 = 0
         @inbounds for i1 in 1:size(src, 1)
@@ -124,19 +142,27 @@ function fnnls!(
 
     function solveP!(y, Atmp, ytmp, A, x, P) # s[P] = AtA[P,P] \ Atb[P]
         # (1)
-        # y[P] .= A[P,P] \ x[P]
+        # y[P] .= A[P,P] \ x[P] # 644 - 721 us
         # (2)
-        # assigntoP!(y, Symmetric(A[P,P]) \ x[P], P) # 670us
-        # assigntoP!(y, A[P,P] \ x[P], P) # 547 us
+        # assigntoP!(y, Symmetric(A[P,P]) \ x[P], P) # 723-836 us
+        assigntoP!(y, A[P,P] \ x[P], P) # 611-709 us
         # (3)
-        invA = cholesky!(Symmetric(A[P,P]); check = false) # 482 us
-        # invA = cholesky!(A[P,P]; check = false) # 510 ua
-        assigntoP!(y, ldiv!(invA, x[P]), P)
+        # invA = cholesky!(Symmetric(A[P,P]); check = false) # 650 us
+        # invA = cholesky!(A[P,P]; check = false) # 650-850 ua
+        # assigntoP!(y, ldiv!(invA, x[P]), P)
         # (4)
         # m_, n_ = copytocorner!(Atmp, A, P)
         # p_ = copytotop!(ytmp, x, P)
         # invA = cholesky!(Symmetric(view(Atmp, 1:m_, 1:n_)); check = false)
-        # outP = ldiv!(invA, view(ytmp, 1:p_)) # 517 us
+        # outP = ldiv!(invA, view(ytmp, 1:p_)) # 630-720 us
+        # assigntoP!(y, outP, P)
+        # (5)
+        # m_, n_ = copytostart!(Atmp, A, P)
+        # p_ = copytotop!(ytmp, x, P)
+        # Atmp_view = reshape(view(Atmp, 1:m_*n_), m_, n_)
+        # # invA = cholesky!(Atmp_view; check = false) # 660 - 730 us
+        # invA = cholesky!(Symmetric(Atmp_view); check = false) # 650 - 715 us
+        # outP = ldiv!(invA, view(ytmp, 1:p_))
         # assigntoP!(y, outP, P)
     end        
 
