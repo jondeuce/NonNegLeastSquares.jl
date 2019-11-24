@@ -28,7 +28,7 @@ function construct_householder!(u::AbstractVector{T}, up::T)::T where {T}
     @assert cl > 0
     clinv = 1 / cl
     sm = zero(T)
-    for ui in u
+    @inbounds for ui in u
         sm += (ui * clinv)^2
     end
     cl *= sqrt(sm)
@@ -53,7 +53,7 @@ Revised FEB 1995 to accompany reprinting of the book by SIAM.
 """
 function apply_householder!(u::AbstractVector{T}, up::T, c::AbstractVector{T}) where {T}
     m = length(u)
-    if m > 1
+    @inbounds if m > 1
         cl = abs(u[1])
         @assert cl > 0
         b = up * u[1]
@@ -63,14 +63,17 @@ function apply_householder!(u::AbstractVector{T}, up::T, c::AbstractVector{T}) w
         b = 1 / b
 
         sm = c[1] * up
-        for i in 2:m
-            sm += c[i] * u[i]
+        @simd for i in 2:m
+            @inbounds sm += c[i] * u[i]
         end
-        if sm != 0
+        @inbounds if sm != 0
             sm *= b
+            # c1_tmp = c[1] + sm * up
+            # axpy!(sm, u, c)
+            # c[1] = c1_tmp
             c[1] += sm * up
-            @inbounds for i in 2:m
-                c[i] += sm * u[i]
+            @simd for i in 2:m
+                @inbounds c[i] += sm * u[i]
             end
         end
     end
@@ -122,8 +125,9 @@ function solve_triangular_system!(zz, A, idx, nsetp, jj)
     @inbounds for l in 1:nsetp
         ip = nsetp + 1 - l
         if (l != 1)
-            for ii in 1:ip
-                zz[ii] -= A[ii, jj] * zz[ip + 1]
+            @simd for ii in 1:ip
+                @inbounds zz[ii] -= A[ii, jj] * zz[ip + 1]
+                # @inbounds zz[ii] = muladd(-A[ii, jj], zz[ip + 1], zz[ii])
             end
         end
         jj = idx[ip]
@@ -240,7 +244,7 @@ function largest_positive_dual(w::AbstractVector{T},
                                       idx::AbstractVector{TI}, range) where {T,TI}
     wmax = zero(T)
     izmax = zero(TI)
-    for i in range
+    @inbounds for i in range
         j = idx[i]
         if w[j] > wmax
             wmax = w[j]
@@ -296,7 +300,7 @@ function nnls!(work::NNLSWorkspace{T, TI},
     terminated = false
 
     # ******  MAIN LOOP BEGINS HERE  ******
-    while true
+    @inbounds while true
         # println("jl main loop")
         # QUIT IF ALL COEFFICIENTS ARE ALREADY IN THE SOLUTION.
         # OR IF M COLS OF A HAVE BEEN TRIANGULARIZED.
@@ -309,8 +313,8 @@ function nnls!(work::NNLSWorkspace{T, TI},
         @inbounds for i in iz1:iz2
             idxi = idx[i]
             sm = zero(T)
-            for l in (nsetp + 1):m
-                sm += A[l, idxi] * b[l]
+            @simd for l in (nsetp + 1):m
+                @inbounds sm += A[l, idxi] * b[l]
             end
             w[idxi] = sm
         end
@@ -335,9 +339,9 @@ function nnls!(work::NNLSWorkspace{T, TI},
             Asave = A[nsetp + 1, j]
             up = construct_householder!(
                  fastview(A, Ainds[nsetp + 1, j], m - nsetp), up)
-            unorm::T = zero(T)
-            for l in 1:nsetp
-                unorm += A[l, j]^2
+            unorm = zero(T)
+            @simd for l in 1:nsetp
+                @inbounds unorm += A[l, j]^2
             end
             unorm = sqrt(unorm)
 
@@ -380,7 +384,7 @@ function nnls!(work::NNLSWorkspace{T, TI},
         nsetp += one(TI)
 
         if iz1 <= iz2
-            for jz in iz1:iz2
+            @inbounds for jz in iz1:iz2
                 jj = idx[jz]
                 apply_householder!(
                     fastview(A, Ainds[nsetp, j], m - nsetp + 1),
@@ -390,7 +394,7 @@ function nnls!(work::NNLSWorkspace{T, TI},
         end
 
         if nsetp != m
-            for l in (nsetp + 1):m
+            @inbounds for l in (nsetp + 1):m
                 A[l, j] = 0
             end
         end
@@ -404,7 +408,7 @@ function nnls!(work::NNLSWorkspace{T, TI},
         # ******  SECONDARY LOOP BEGINS HERE ******
         #
         # ITERATION COUNTER.
-        while true
+        @inbounds while true
             iter += 1
             if iter > max_iter
                 work.mode = 3
@@ -416,7 +420,7 @@ function nnls!(work::NNLSWorkspace{T, TI},
             # SEE IF ALL NEW CONSTRAINED COEFFS ARE FEASIBLE.
             # IF NOT COMPUTE ALPHA.
             alpha = convert(T, 2)
-            for ip in one(TI):nsetp
+            @inbounds for ip in one(TI):nsetp
                 l = idx[ip]
                 if zz[ip] <= 0
                     t = -x[l] / (zz[ip] - x[l])
@@ -435,7 +439,7 @@ function nnls!(work::NNLSWorkspace{T, TI},
 
             # OTHERWISE USE ALPHA WHICH WILL BE BETWEEN 0 AND 1 TO
             # INTERPOLATE BETWEEN THE OLD X AND THE NEW ZZ.
-            for ip in one(TI):nsetp
+            @inbounds for ip in one(TI):nsetp
                 l = idx[ip]
                 x[l] = x[l] + alpha * (zz[ip] - x[l])
             end
@@ -444,18 +448,18 @@ function nnls!(work::NNLSWorkspace{T, TI},
             # FROM SET P TO SET Z.
             i = idx[jj]
             kk = 1
-            while true
+            @inbounds while true
                 x[i] = 0
 
                 if jj != nsetp
                     jj += one(TI)
-                    for j in jj:nsetp
+                    @inbounds for j in jj:nsetp
                         ii = idx[j]
                         idx[j - 1] = ii
                         cc, ss, sig = orthogonal_rotmat(A[j - 1, ii], A[j, ii])
                         A[j - 1, ii] = sig
                         A[j, ii] = 0
-                        for l in one(TI):n
+                        @inbounds for l in one(TI):n
                             if l != ii
                                 # Apply procedure G2 (CC,SS,A(J-1,L),A(J,L))
                                 temp = A[j - 1, l]
@@ -481,7 +485,7 @@ function nnls!(work::NNLSWorkspace{T, TI},
                 # THAT ARE NONPOSITIVE WILL BE SET TO ZERO
                 # AND MOVED FROM SET P TO SET Z.
                 allfeasible = true
-                for jj in one(TI):nsetp
+                @inbounds for jj in one(TI):nsetp
                     i = idx[jj]
                     if x[i] <= 0
                         allfeasible = false
@@ -503,7 +507,7 @@ function nnls!(work::NNLSWorkspace{T, TI},
         end
         # ******  END OF SECONDARY LOOP  ******
 
-        for i in 1:nsetp
+        @inbounds for i in 1:nsetp
             x[idx[i]] = zz[i]
         end
         # ALL NEW COEFFS ARE POSITIVE.  LOOP BACK TO BEGINNING.
@@ -515,8 +519,8 @@ function nnls!(work::NNLSWorkspace{T, TI},
 
     sm = zero(T)
     if nsetp < m
-        for i in (nsetp + 1):m
-            sm += b[i]^2
+        @simd for i in (nsetp + 1):m
+            @inbounds sm += b[i]^2
         end
     else
         w .= 0
@@ -571,7 +575,7 @@ function nnls(A,
     else
         work = NNLSWorkspace(m, n, T)
         X = Array{T}(undef,n, k)
-        for i = 1:k
+        @inbounds for i = 1:k
             X[:, i] = nnls!(work, A, @view(B[:,i]), max_iter)
         end
         return X
