@@ -68,9 +68,6 @@ function apply_householder!(u::AbstractVector{T}, up::T, c::AbstractVector{T}) w
         end
         @inbounds if sm != 0
             sm *= b
-            # c1_tmp = c[1] + sm * up
-            # axpy!(sm, u, c)
-            # c[1] = c1_tmp
             c[1] += sm * up
             @simd for i in 2:m
                 @inbounds c[i] += sm * u[i]
@@ -149,21 +146,22 @@ mutable struct NNLSWorkspace{T, I <: Integer}
 end
 
 function NNLSWorkspace{T,I}(m, n) where {T, I<:Integer}
-    NNLSWorkspace{T,I}(Matrix{T}(undef, m, n), # A
-                       Vector{T}(undef,m),    # b
-                       Vector{T}(undef,n),    # x
-                       Vector{T}(undef,n),    # w
-                       Vector{T}(undef,m),    # zz
-                       Vector{I}(undef,n),    # idx
-                       zero(T), # rnorm
-                       zero(I), # mode
-                       zero(I)  # nsetp
-       )
+    NNLSWorkspace{T,I}(
+        zeros(T, m, n), # A
+        zeros(T, m),    # b
+        zeros(T, n),    # x
+        zeros(T, n),    # w
+        zeros(T, m),    # zz
+        zeros(I, n),    # idx
+        zero(T),        # rnorm
+        zero(I),        # mode
+        zero(I),        # nsetp
+    )
 end
 
 function Base.resize!(work::NNLSWorkspace{T}, m::Integer, n::Integer) where {T}
-    work.QA = Matrix{T}(undef,m, n)
-    work.Qb = Vector{T}(undef,m)
+    work.QA = zeros(T, m, n)
+    work.Qb = zeros(T, m)
     resize!(work.x, n)
     resize!(work.w, n)
     resize!(work.zz, m)
@@ -181,18 +179,22 @@ function load!(work::NNLSWorkspace{T}, A::AbstractMatrix{T}, b::AbstractVector{T
     work
 end
 
-NNLSWorkspace(m::Integer, n::Integer,
-                    eltype::Type{T}=Float64,
-                    indextype::Type{I}=Int) where {T,I} = NNLSWorkspace{T, I}(m, n)
+function NNLSWorkspace(
+        m::Integer,
+        n::Integer,
+        eltype::Type{T} = Float64,
+        indextype::Type{I} = Int
+    ) where {T,I}
+    NNLSWorkspace{T, I}(m, n)
+end
 
-function NNLSWorkspace(A::Matrix{T}, b::Vector{T}, indextype::Type{I}=Int) where {T,I}
+function NNLSWorkspace(A::Matrix{T}, b::Vector{T}, indextype::Type{I} = Int) where {T,I}
     m, n = size(A)
     @assert size(b) == (m,)
     work = NNLSWorkspace{T, I}(m, n)
     load!(work, A, b)
     work
 end
-
 
 """
 Views in Julia still allocate some memory (since they need to keep
@@ -240,8 +242,11 @@ end
     @assert size(work.idx) == (n,)
 end
 
-function largest_positive_dual(w::AbstractVector{T},
-                                      idx::AbstractVector{TI}, range) where {T,TI}
+function largest_positive_dual(
+        w::AbstractVector{T},
+        idx::AbstractVector{TI},
+        range
+    ) where {T,TI}
     wmax = zero(T)
     izmax = zero(TI)
     @inbounds for i in range
@@ -253,7 +258,6 @@ function largest_positive_dual(w::AbstractVector{T},
     end
     wmax, izmax
 end
-
 
 """
 Algorithm NNLS: NONNEGATIVE LEAST SQUARES
@@ -268,8 +272,11 @@ GIVEN AN M BY N MATRIX, A, AND AN M-VECTOR, B,  COMPUTE AN
 N-VECTOR, X, THAT SOLVES THE LEAST SQUARES PROBLEM
                  A * X = B  SUBJECT TO X .GE. 0
 """
-function nnls!(work::NNLSWorkspace{T, TI},
-                      max_iter::Integer=(3 * size(work.QA, 2))) where {T, TI}
+function nnls!(
+        work::NNLSWorkspace{T, TI},
+        max_iter::Integer = 3*size(work.QA, 2)
+    ) where {T, TI}
+
     checkargs(work)
 
     A = work.QA
@@ -279,7 +286,7 @@ function nnls!(work::NNLSWorkspace{T, TI},
     w = work.w
     zz = work.zz
     idx = work.idx
-    factor = 0.01
+    factor = T(0.01)
     work.mode = 1
 
     m = convert(TI, size(A, 1))
@@ -530,10 +537,12 @@ function nnls!(work::NNLSWorkspace{T, TI},
     return work.x
 end
 
-function nnls!(work::NNLSWorkspace{T},
-                  A::AbstractMatrix{T},
-                  b::AbstractVector{T},
-                  max_iter=(3 * size(A, 2))) where {T}
+function nnls!(
+        work::NNLSWorkspace{T},
+        A::AbstractMatrix{T},
+        b::AbstractVector{T},
+        max_iter = 3*size(A, 2)
+    ) where {T}
     load!(work, A, b)
     nnls!(work, max_iter)
     work.x
@@ -552,18 +561,22 @@ References:
     Lawson, C.L. and R.J. Hanson, Solving Least-Squares Problems,
     Prentice-Hall, Chapter 23, p. 161, 1974.
 """
-function nnls(A,
-              b::AbstractVector{T};
-              max_iter::Int=(3 * size(A, 2))) where {T}
+function nnls(
+        A,
+        b::AbstractVector{T};
+        max_iter::Int = 3*size(A, 2)
+    ) where {T}
     work = NNLSWorkspace(A, b)
     nnls!(work, max_iter)
     work.x
 end
 
-function nnls(A,
-              B::AbstractMatrix{T};
-              use_parallel = true,
-              max_iter::Int=(3 * size(A, 2))) where {T}
+function nnls(
+        A,
+        B::AbstractMatrix{T};
+        use_parallel = false,
+        max_iter::Int = 3*size(A, 2)
+    ) where {T}
 
     m, n = size(A)
     k = size(B, 2)
@@ -574,7 +587,7 @@ function nnls(A,
         end
     else
         work = NNLSWorkspace(m, n, T)
-        X = Array{T}(undef,n, k)
+        X = zeros(T, n, k)
         @inbounds for i = 1:k
             X[:, i] = nnls!(work, A, @view(B[:,i]), max_iter)
         end
